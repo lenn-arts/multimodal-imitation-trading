@@ -5,6 +5,7 @@ from alpaca.data.timeframe import TimeFrame
 
 from data import get_crypto_bars
 from experts import expert_1, expert_2
+from utils import Actions
 
 
 def plot_trading_chart(bars, actions):
@@ -19,8 +20,9 @@ def plot_trading_chart(bars, actions):
     bars_with_actions = bars.copy()
     bars_with_actions['expert_action'] = actions
 
-    buy_actions = bars_with_actions[bars_with_actions['expert_action'] == 'buy']
-    sell_actions = bars_with_actions[bars_with_actions['expert_action'] == 'sell']
+    buy_actions = bars_with_actions[bars_with_actions['expert_action'] == Actions.Buy]
+    sell_actions = bars_with_actions[bars_with_actions['expert_action']
+                                     == Actions.Sell]
 
     plt.figure(figsize=(15, 7))
     plt.plot(bars_with_actions['timestamp'],
@@ -36,10 +38,9 @@ def plot_trading_chart(bars, actions):
     plt.title('Trading Chart')
     plt.legend()
     plt.grid()
-    plt.show()
 
 
-def calculate_profit(bars, actions, base_amount=100):
+def calculate_profit(bars, actions, base_amount=1):
     """
     Calculate the profit based on the historical price data and the given strategy actions,
     always buying a fixed amount and selling all current holdings.
@@ -62,11 +63,11 @@ def calculate_profit(bars, actions, base_amount=100):
     executed_trades = []
 
     for i in range(len(actions)):
-        if actions[i] == 'buy' and not holding_position:
+        if actions[i] == Actions.Buy and not holding_position:
             entry_timestamp = bars['timestamp'][i]
             btc_held = base_amount / bars['close'][i]
             holding_position = True
-        elif actions[i] == 'sell' and holding_position:
+        elif actions[i] == Actions.Sell and holding_position:
             trade_profit = btc_held * bars['close'][i] - base_amount
             total_profit += trade_profit
             executed_trades.append({
@@ -92,7 +93,7 @@ def print_summary(profit, trades):
 
 
 if __name__ == '__main__':
-    bars = get_crypto_bars("BTC/USD", datetime(2021, 7, 1),
+    bars = get_crypto_bars("BTC/USD", datetime(2021, 7, 11),
                            datetime(2022, 7, 1), timeframe=TimeFrame.Day)
 
     actions = expert_2(bars)
@@ -100,3 +101,4 @@ if __name__ == '__main__':
     print("Expert 2")
     print_summary(profit, trades)
     plot_trading_chart(bars, actions)
+    plt.show()

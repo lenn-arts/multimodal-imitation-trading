@@ -4,6 +4,7 @@ import numpy as np
 from alpaca.data.timeframe import TimeFrame
 
 from data import get_crypto_bars
+from utils import Actions
 
 
 def expert_1(bars):
@@ -17,7 +18,7 @@ def expert_1(bars):
     Returns:
         np.ndarray: An array of 'buy' and 'sell' actions based on the simple strategy.
     """
-    return np.where(bars['close'].shift(-1) > bars['close'], 'buy', 'sell')
+    return np.where(bars['close'].shift(-1) > bars['close'], Actions.Buy, Actions.Sell)
 
 
 def expert_2(bars):
@@ -34,20 +35,20 @@ def expert_2(bars):
         list: A list of 'buy', 'hold', and 'sell' actions based on the specified strategy.
     """
     n = len(bars)
-    expert_actions = ['hold'] * n
+    expert_actions = [Actions.Hold] * n
     holding_position = False
 
     for i in range(n - 1):
         if bars['close'][i + 1] > bars['close'][i] and not holding_position:
-            expert_actions[i] = 'buy'
+            expert_actions[i] = Actions.Buy
             holding_position = True
         elif bars['close'][i + 1] < bars['close'][i] and holding_position:
-            expert_actions[i] = 'sell'
+            expert_actions[i] = Actions.Sell
             holding_position = False
 
     # Sell at the end of the dataframe if still holding a position
     if holding_position:
-        expert_actions[-1] = 'sell'
+        expert_actions[-1] = Actions.Sell
 
     return expert_actions
 
