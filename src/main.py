@@ -9,7 +9,7 @@ from stock_env import TradingEnv
 
 bars = get_crypto_bars("BTC/USD", datetime(2021, 7, 1),
                        datetime(2022, 7, 1), timeframe=TimeFrame.Day)
-expert_actions = expert_2(bars)
+expert_actions = expert_1(bars)
 
 print(bars.head())
 print(expert_actions[:5])

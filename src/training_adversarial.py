@@ -29,9 +29,9 @@ expert = PPO(
     ent_coef=0.0,
     learning_rate=0.0003,
     n_epochs=10,
-    n_steps=64,
-)
+    n_steps=64)
 expert.learn(1000)  # Note: set to 100000 to train a proficient expert
+print("done training expert")
 
 # 2) get expert trajectories
 rng = np.random.default_rng()
@@ -41,10 +41,9 @@ rollouts = rollout.rollout(
         "seals/CartPole-v0",
         n_envs=5,
         post_wrappers=[lambda env, _: RolloutInfoWrapper(env)],
-        rng=rng,
-    ),
+        rng=rng),
     rollout.make_sample_until(min_timesteps=None, min_episodes=60),
-    rng=rng,
+    rng=rng
 )
 
 # 3) train to get reward function
@@ -55,12 +54,12 @@ learner = PPO(
     batch_size=64,
     ent_coef=0.0,
     learning_rate=0.0003,
-    n_epochs=10,
-)
+    n_epochs=10)
 
 reward_net = BasicShapedRewardNet( # discrimnator net
-    venv.observation_space, venv.action_space, normalize_input_layer=RunningNorm
-)
+    venv.observation_space, venv.action_space, 
+    normalize_input_layer=RunningNorm)
+
 airl_trainer = AIRL(
     demonstrations=rollouts,
     demo_batch_size=1024,
@@ -68,16 +67,15 @@ airl_trainer = AIRL(
     n_disc_updates_per_round=4,
     venv=venv,
     gen_algo=learner,
-    reward_net=reward_net,
-)
+    reward_net=reward_net,)
 
 learner_rewards_before_training, _ = evaluate_policy(
-    learner, venv, 100, return_episode_rewards=True
-)
-airl_trainer.train(20000)  # Note: set to 300000 for better results
+    learner, venv, 100, return_episode_rewards=True)
+
+airl_trainer.train(16384)  # Note: set to 300000 for better results
+
 learner_rewards_after_training, _ = evaluate_policy(
-    learner, venv, 100, return_episode_rewards=True
-)
+    learner, venv, 100, return_episode_rewards=True)
 
 # Z) plot
 print(np.mean(learner_rewards_after_training))
@@ -85,7 +83,6 @@ print(np.mean(learner_rewards_before_training))
 
 plt.hist(
     [learner_rewards_before_training, learner_rewards_after_training],
-    label=["untrained", "trained"],
-)
+    label=["untrained", "trained"])
 plt.legend()
 plt.show()

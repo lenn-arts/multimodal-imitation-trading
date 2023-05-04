@@ -1,6 +1,11 @@
 from datetime import datetime
 
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import matplotlib.pyplot as plt
+import numpy as np
+import PIL.Image
+import os
+
 from alpaca.data.timeframe import TimeFrame
 
 from data import get_crypto_bars
@@ -8,7 +13,7 @@ from experts import expert_1, expert_2
 from utils import Actions
 
 
-def plot_trading_chart(bars, actions):
+def plot_trading_chart(bars, actions=None, ret_img=False):
     """
     Generate a chart with the close price at each timestamp and mark each buy action
     with a green upward triangle and each sell action with a red downward triangle.
@@ -18,26 +23,47 @@ def plot_trading_chart(bars, actions):
         actions (list): A list of actions ('buy', 'hold', 'sell') based on a trading strategy.
     """
     bars_with_actions = bars.copy()
-    bars_with_actions['expert_action'] = actions
 
-    buy_actions = bars_with_actions[bars_with_actions['expert_action'] == Actions.Buy]
-    sell_actions = bars_with_actions[bars_with_actions['expert_action']
-                                     == Actions.Sell]
-
-    plt.figure(figsize=(15, 7))
-    plt.plot(bars_with_actions['timestamp'],
+    fig_size = (15,7) if not ret_img else (3,3)
+    figure, ax = plt.subplots(figsize=fig_size)
+    ax.plot(bars_with_actions['timestamp'],
              bars_with_actions['close'], label='Close Price', linewidth=1)
 
-    plt.scatter(buy_actions['timestamp'], buy_actions['close'],
-                marker='^', color='g', label='Buy')
-    plt.scatter(sell_actions['timestamp'], sell_actions['close'],
-                marker='v', color='r', label='Sell')
+    # if only interested in pixels (used as feature)
+    if ret_img:
+        # inspired from: https://stackoverflow.com/questions/35355930/matplotlib-figure-to-image-as-a-numpy-array
+        ax.set_ylim(bottom=0.0)
+        ax.tick_params(axis='x',          # changes apply to the x-axis    
+            labelbottom=False) # labels along the bottom edge are off
+        ax.tick_params(axis='y',          # changes apply to the x-axis    
+            labelleft=False) # labels along the bottom edge are off
+        width, height = figure.get_size_inches() * figure.get_dpi()
+        #print(width, height, figure.get_dpi(), figure.get_size_inches())
+        width, height = int(width), int(height)
+        canvas = FigureCanvas(figure)
+        canvas.draw() 
+        img = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
+        img = np.max(img, -1, keepdims=False) # [h, w]
+        img = PIL.Image.fromarray(img, mode="L")
+        #img.save(os.path.dirname(__file__)+"/test.png")
+        plt.close()
+        return img #img.astype(np.float32) / 255.0
 
-    plt.xlabel('Timestamp')
-    plt.ylabel('Close Price')
-    plt.title('Trading Chart')
-    plt.legend()
-    plt.grid()
+    if actions is not None:
+        bars_with_actions['expert_action'] = actions
+        buy_actions = bars_with_actions[bars_with_actions['expert_action'] == Actions.Buy]
+        sell_actions = bars_with_actions[bars_with_actions['expert_action']
+                                        == Actions.Sell]
+        ax.scatter(buy_actions['timestamp'], buy_actions['close'],
+                    marker='^', color='g', label='Buy')
+        ax.scatter(sell_actions['timestamp'], sell_actions['close'],
+                    marker='v', color='r', label='Sell')
+
+    ax.set_xlabel('Timestamp')
+    ax.set_ylabel('Close Price')
+    ax.set_title('Trading Chart')
+    ax.legend()
+    ax.grid()
 
 
 def calculate_profit(bars, actions, base_amount=1):
@@ -68,6 +94,9 @@ def calculate_profit(bars, actions, base_amount=1):
             btc_held = base_amount / bars['close'][i]
             holding_position = True
         elif actions[i] == Actions.Sell and holding_position:
+            # sell everything? A: yes
+            # reason behind trade_profit?
+            # A: current value - value when purchased
             trade_profit = btc_held * bars['close'][i] - base_amount
             total_profit += trade_profit
             executed_trades.append({
@@ -100,5 +129,5 @@ if __name__ == '__main__':
     profit, trades = calculate_profit(bars, actions)
     print("Expert 2")
     print_summary(profit, trades)
-    plot_trading_chart(bars, actions)
+    plot_trading_chart(bars, actions, ret_img=False)
     plt.show()
