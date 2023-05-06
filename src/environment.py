@@ -71,3 +71,6 @@ if __name__=="__main__":
     #print(env.observation_matrix.shape)
     #print(env.transition_matrix.shape)
     #print(env.reward_matrix.shape)
+    print(env.observation_space)
+    print(env.action_space)
+    print(env.reward_range)

@@ -29,7 +29,8 @@ class TradingEnv(gym.Env):
         assert df.ndim == 2
 
         self.seed()
-        self.df = df # has as many entries as there are time steps in this environment
+        self.df = df.copy(deep=True) # has as many entries as there are time steps in this environment
+        self.time_unit = time_unit
         self.portfolio = {}
         self.portfolio["cash"] = np.zeros((len(df), 1))
         self.initial_cash = 100
@@ -39,11 +40,14 @@ class TradingEnv(gym.Env):
         self.window_size = window_size
         self.prices, self.signal_features = self._process_data()
         self.shape = (window_size, self.signal_features.shape[1])
+        self.shape_encoding = (1, 24)
 
         # spaces
         self.action_space = spaces.Discrete(len(Actions))
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=self.shape, dtype=np.float64)
+            low=-np.inf, high=np.inf, 
+            shape=self.shape_encoding,# shape=self.shape
+            dtype=np.float64)
 
         # episode
         self._start_tick = self.window_size
@@ -58,7 +62,6 @@ class TradingEnv(gym.Env):
         self._total_reward = None
         self._total_profit = None
         self.history = None
-        self.time_unit = time_unit
 
         self._encoder = None
         self._encoder_exists = False
@@ -86,8 +89,12 @@ class TradingEnv(gym.Env):
     def step(self, action):
         # TODO: Be careful if actions are enum or integer values!
         self._action_history.append(action)
+        #print(self._current_tick)
+        if self._done:
+            return 
 
         if self._current_tick == self._end_tick:
+            print(self._current_tick, "setting done true")
             self._done = True
 
         step_reward = 0
@@ -101,7 +108,7 @@ class TradingEnv(gym.Env):
             step_reward = end_price - start_price # TODO is this correct? (base_amount/start_price)*end_price) - base_amount/start_price*start_price )
             step_profit = self._base_amount * (end_price / start_price - 1)
             
-            self.portfolio["cash"][self._current_tick] += self.portfolio["pos_units"] * self.prices[self._current_tick]
+            self.portfolio["cash"][self._current_tick] += self.portfolio["pos_units"][self._current_tick] * self.prices[self._current_tick]
             self.portfolio["pos_units"][self._current_tick] = 0
 
             self._has_open_position = False
@@ -122,8 +129,9 @@ class TradingEnv(gym.Env):
         self._total_reward += step_reward
         self._total_profit += step_profit
 
-        
+        #print("done trading in step")
         observation = self._get_observation()
+        #print("got observation")
         info = dict(
             total_reward=self._total_reward,
             total_profit=self._total_profit,
@@ -131,11 +139,11 @@ class TradingEnv(gym.Env):
         )
         self._update_history(info)
 
-        self._current_tick += 1
-
-        self.portfolio["cash"][self._current_tick] = self.portfolio["cash"][self._current_tick-1]
-        self.portfolio["pos_units"][self._current_tick] = self.portfolio["pos_units"][self._current_tick-1]
-        #self.portfolio["pos_val"][self._current_tick] = self.portfolio["pos_val"][self._current_tick-1]
+        if self._done is False:
+            self._current_tick += 1
+            self.portfolio["cash"][self._current_tick] = self.portfolio["cash"][self._current_tick-1]
+            self.portfolio["pos_units"][self._current_tick] = self.portfolio["pos_units"][self._current_tick-1]
+            #self.portfolio["pos_val"][self._current_tick] = self.portfolio["pos_val"][self._current_tick-1]
 
 
         return observation, step_reward, self._done, info
@@ -152,14 +160,14 @@ class TradingEnv(gym.Env):
         port_data = np.squeeze(np.array([val[(self._current_tick-self.window_size+1):self._current_tick+1] for val in self.portfolio.values()])).T # [window, features] 
         pos_chart = plot_trading_chart(pos_data, ret_img=True) # [h, w, 1]
         # convert dates to day delta to first date
-        pos_data['timestamp'] = (pos_data['timestamp'] - pos_data['timestamp'].min()) / np.timedelta64(1,self.time_unit)
+        #pos_data.loc[:,'timestamp'] = (pos_data['timestamp'] - pos_data['timestamp'].min()) / np.timedelta64(1,self.time_unit)
         #print(pos_data.dtypes)
         pos_data = pos_data.to_numpy() # [window, cols]
-        print(port_data.shape, port_data[-5:])
-        print(pos_data.shape, pos_data[-5:])
+        #print(port_data.shape)#, port_data[-5:])
+        #print(pos_data.shape)#, pos_data[-5:])
         fin_data = np.concatenate([pos_data, port_data], axis=-1) # [window, cols+features]
         obs = self.get_encoder().encode(fin_data, pos_chart)
-        return obs
+        return obs.detach().numpy() # TODO, train without detaching
 
     def _update_history(self, info):
         if not self.history:
@@ -189,6 +197,8 @@ class TradingEnv(gym.Env):
         prices = self.df.loc[:, 'close'].to_numpy()
 
         signal_features = self.df
+        print("signal features", type(signal_features))
+        signal_features.loc[:,'timestamp'] = (signal_features['timestamp'] - signal_features['timestamp'].min()) / np.timedelta64(1,self.time_unit)
 
         return prices, signal_features
     
@@ -226,7 +236,7 @@ class Encoder():
         fin_data = torch.unsqueeze(torch.from_numpy(fin_data),0).float() # [1, window, cols]
         fin_encoded = self.generator(fin_data) # # [1, output_dim_transformer]
         data_encoded = torch.concat([fin_encoded, img_encoded], dim=-1) # [1, output_dim_transformer+output_dim_img]
-        print("encoded shape", data_encoded.shape)
+        #print("encoded shape", data_encoded.shape)
         return data_encoded
 
 
@@ -280,6 +290,8 @@ class CNN(torch.nn.Module):
         for layer in self.layers:
             output = layer(output)
         return output
+
+
 
 if __name__ == '__main__':
     enc = Encoder()

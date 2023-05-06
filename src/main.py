@@ -4,12 +4,12 @@ from alpaca.data.timeframe import TimeFrame
 from matplotlib import pyplot as plt
 
 from data import get_crypto_bars
-from experts import expert_1, expert_2
+from experts import expert_1, expert_2, get_expert_trajectories
 from stock_env import TradingEnv
 
 bars = get_crypto_bars("BTC/USD", datetime(2021, 7, 1),
                        datetime(2022, 7, 1), timeframe=TimeFrame.Day)
-expert_actions = expert_1(bars)
+expert_actions = expert_2(bars)
 
 print(bars.head())
 print(expert_actions[:5])
@@ -29,4 +29,6 @@ while True:
     tick += 1
 
 env.render_all()
-plt.show()
+#plt.show()
+
+get_expert_trajectories()
