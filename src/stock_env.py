@@ -25,7 +25,7 @@ class TradingEnv(gym.Env):
 
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df, window_size, time_unit="D"):
+    def __init__(self, df, window_size, time_unit="D", encode=True):
         assert df.ndim == 2
 
         self.seed()
@@ -40,10 +40,11 @@ class TradingEnv(gym.Env):
         self.window_size = window_size
         self.prices, self.signal_features = self._process_data()
         self.shape = (window_size, self.signal_features.shape[1])
-        self.shape_encoding = (1, 24)
+        self.encode = encode
+        self.shape_encoding = (1, 24) if self.encode else [window_size*11]
 
         # spaces
-        self.action_space = spaces.Discrete(len(Actions))
+        self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
             shape=self.shape_encoding,# shape=self.shape
@@ -65,6 +66,7 @@ class TradingEnv(gym.Env):
 
         self._encoder = None
         self._encoder_exists = False
+        self.get_encoder()
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -79,14 +81,12 @@ class TradingEnv(gym.Env):
         self._total_reward = 0.
         self._total_profit = 0.
         self.history = {}
-        
-        self._encoder = None
-        self._encoder_exists = False
 
         return self._get_observation()
 
 
     def step(self, action):
+        time_begin = datetime.now()
         # TODO: Be careful if actions are enum or integer values!
         self._action_history.append(action)
         #print(self._current_tick)
@@ -101,25 +101,33 @@ class TradingEnv(gym.Env):
         step_profit = 0
 
         # sell all?
-        if (self._done or action == Actions.Sell) and self._has_open_position:
-            start_price = self.prices[self._last_trade_tick]
-            end_price = self.prices[self._current_tick]
+        if (self._done or (action == 0 or action == Actions.Sell)) :
+            if self._has_open_position:
+                start_price = self.prices[self._last_trade_tick]
+                end_price = self.prices[self._current_tick]
 
-            step_reward = end_price - start_price # TODO is this correct? (base_amount/start_price)*end_price) - base_amount/start_price*start_price )
-            step_profit = self._base_amount * (end_price / start_price - 1)
-            
-            self.portfolio["cash"][self._current_tick] += self.portfolio["pos_units"][self._current_tick] * self.prices[self._current_tick]
-            self.portfolio["pos_units"][self._current_tick] = 0
+                step_reward = end_price - start_price # TODO is this correct? (base_amount/start_price)*end_price) - base_amount/start_price*start_price )
+                step_profit = self._base_amount * (end_price / start_price - 1)
+                
+                self.portfolio["cash"][self._current_tick] += self.portfolio["pos_units"][self._current_tick] * self.prices[self._current_tick]
+                self.portfolio["pos_units"][self._current_tick] = 0
 
-            self._has_open_position = False
-            self._last_trade_tick = self._current_tick
+                self._has_open_position = False
+                self._last_trade_tick = self._current_tick
 
         # buy for USD base_amount equivalent
-        elif action == Actions.Buy and not self._has_open_position:
-            self._has_open_position = True
-            self._last_trade_tick = self._current_tick
-            self.portfolio["cash"][self._current_tick] -= self._base_amount
-            self.portfolio["pos_units"][self._current_tick] += self._base_amount / self.prices[self._current_tick]
+        elif (action == 1 or action == Actions.Buy):
+            if not self._has_open_position:
+                self._has_open_position = True
+                self._last_trade_tick = self._current_tick
+                self.portfolio["cash"][self._current_tick] -= self._base_amount
+                self.portfolio["pos_units"][self._current_tick] += self._base_amount / self.prices[self._current_tick]
+
+        elif (action == 2 or action == Actions.Hold):
+            pass
+        
+        else:
+            print("unknown action:", action)
 
         self.portfolio["pos_val"][self._current_tick] = self.portfolio["pos_units"][self._current_tick] * self.prices[self._current_tick]
 
@@ -130,7 +138,9 @@ class TradingEnv(gym.Env):
         self._total_profit += step_profit
 
         #print("done trading in step")
+        time_begin_encode = datetime.now()
         observation = self._get_observation()
+        time_end_encode = datetime.now()
         #print("got observation")
         info = dict(
             total_reward=self._total_reward,
@@ -145,19 +155,25 @@ class TradingEnv(gym.Env):
             self.portfolio["pos_units"][self._current_tick] = self.portfolio["pos_units"][self._current_tick-1]
             #self.portfolio["pos_val"][self._current_tick] = self.portfolio["pos_val"][self._current_tick-1]
 
-
+        time_end = datetime.now()
+        #print(f"step done, time used: {time_end-time_begin}, of which was {time_end_encode-time_begin_encode}")
         return observation, step_reward, self._done, info
 
     def get_encoder(self):
         if not self._encoder_exists:
-            self._encoder = Encoder()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print("device", device)
+            self._encoder = Encoder(device)
             self._encoder_exists = True
         return self._encoder
 
     def _get_observation(self):
         pos_data = self.signal_features[(self._current_tick-self.window_size+1):self._current_tick+1]
+        #print("pos_data.shape",pos_data.shape)
         # deliberately not including total profit because shouldnt affect trading behavior
         port_data = np.squeeze(np.array([val[(self._current_tick-self.window_size+1):self._current_tick+1] for val in self.portfolio.values()])).T # [window, features] 
+        if self.window_size == 1: port_data = np.unsqueeze(port_data, axis=0)
+        #print("port_data.shape",port_data.shape)
         pos_chart = plot_trading_chart(pos_data, ret_img=True) # [h, w, 1]
         # convert dates to day delta to first date
         #pos_data.loc[:,'timestamp'] = (pos_data['timestamp'] - pos_data['timestamp'].min()) / np.timedelta64(1,self.time_unit)
@@ -166,8 +182,8 @@ class TradingEnv(gym.Env):
         #print(port_data.shape)#, port_data[-5:])
         #print(pos_data.shape)#, pos_data[-5:])
         fin_data = np.concatenate([pos_data, port_data], axis=-1) # [window, cols+features]
-        obs = self.get_encoder().encode(fin_data, pos_chart)
-        return obs.detach().numpy() # TODO, train without detaching
+        obs = self.get_encoder().encode(fin_data, pos_chart, encode=self.encode)
+        return obs.detach().cpu().numpy() # TODO, train without detaching
 
     def _update_history(self, info):
         if not self.history:
@@ -205,44 +221,50 @@ class TradingEnv(gym.Env):
 
 
 class Encoder():
-    def __init__(self) -> None:
+    def __init__(self, device="cpu") -> None:
+        self.device = device
         self._generate_NN()
         self._generate_img_compressor()
         self.trans = transforms.Compose([transforms.Resize(256),
                                         transforms.CenterCrop(240),
                                         transforms.ToTensor()])
+        
 
     def _generate_NN(self):
-        self.generator = NN(11,12)
+        self.generator = NN(11,12).to(self.device)
 
     def _generate_img_compressor(self):
-        self.img_encoder = CNN()
+        self.img_encoder = CNN().to(self.device)
 
     def train(self):
         pass
 
-    def encode(self, fin_data, fin_chart_img, transform_img=True):
-        if transform_img:
-            input_img = self.trans(fin_chart_img)
-            input_img = torch.unsqueeze(input_img,0) # [1, 1, h, w]
-        else: 
-            input_img = torch.unsqueeze(torch.unsqueeze(torch.from_numpy(fin_chart_img),0),0)
-        img_encoded = self.img_encoder(input_img) # [1, output_dim_img]
-        # a) transformer on all
-        #fin_data = torch.unsqueeze(torch.flatten(torch.from_numpy(fin_data)),0) # [1, window*cols]
-        #input = torch.concat([fin_data, img_encoded], dim=-1) # [1, (window*cols)+input_img]
-        #data_encoded = self.generator(input)
-        # b) transformer only on windowed-data and cnn separate
-        fin_data = torch.unsqueeze(torch.from_numpy(fin_data),0).float() # [1, window, cols]
-        fin_encoded = self.generator(fin_data) # # [1, output_dim_transformer]
-        data_encoded = torch.concat([fin_encoded, img_encoded], dim=-1) # [1, output_dim_transformer+output_dim_img]
-        #print("encoded shape", data_encoded.shape)
+    def encode(self, fin_data, fin_chart_img, transform_img=True, encode=True):
+        if encode:
+            if transform_img:
+                input_img = self.trans(fin_chart_img).to(self.device)
+                input_img = torch.unsqueeze(input_img,0) # [1, 1, h, w]
+            else: 
+                input_img = torch.unsqueeze(torch.unsqueeze(torch.from_numpy(fin_chart_img),0),0).to(self.device)
+            img_encoded = self.img_encoder(input_img) # [1, output_dim_img]
+            # a) transformer on all
+            #fin_data = torch.unsqueeze(torch.flatten(torch.from_numpy(fin_data)),0) # [1, window*cols]
+            #input = torch.concat([fin_data, img_encoded], dim=-1) # [1, (window*cols)+input_img]
+            #data_encoded = self.generator(input)
+            # b) transformer only on windowed-data and cnn separate
+            fin_data = torch.unsqueeze(torch.from_numpy(fin_data),0).float().to(self.device) # [1, window, cols]
+            fin_encoded = self.generator(fin_data) # # [1, output_dim_transformer]
+            data_encoded = torch.concat([fin_encoded, img_encoded], dim=-1) # [1, output_dim_transformer+output_dim_img]
+            #print("encoded shape", data_encoded.shape)
+        else:
+            data_encoded = torch.flatten(torch.from_numpy(fin_data).to(self.device).float())
         return data_encoded
 
 
 
 class NN(torch.nn.Module):
-    def __init__(self, in_size, out_size, *args, **kwargs) -> None:
+    def __init__(self, in_size, out_size, *args, **kwargs) -> None:  # [B X S X input_features]
+        torch.manual_seed(1) # always create with same weights
         super().__init__(*args, **kwargs)
         self.layers = nn.ModuleList([
             nn.TransformerEncoder(
@@ -257,6 +279,7 @@ class NN(torch.nn.Module):
             nn.LazyLinear(out_size),
             #nn.ReLU()
         ])
+        print("transformer params: ",next(self.parameters())[0][0])
     
     # idea: train self-supervised as autoencoder
     def forward(self, input):
@@ -271,6 +294,7 @@ class NN(torch.nn.Module):
 
 class CNN(torch.nn.Module):
     def __init__(self, *args, **kwargs) -> None:
+        torch.manual_seed(1) # always create with same weights
         super().__init__(*args, **kwargs)
         self.layers = nn.ModuleList([
             nn.Conv2d(1,8,3, stride=2), # expect b/w inputs
@@ -284,6 +308,7 @@ class CNN(torch.nn.Module):
             nn.ReLU(),
             nn.LazyLinear(12)
         ])
+        print("cnn params: ",next(self.parameters())[0][0])
     
     def forward(self, input):
         output = input

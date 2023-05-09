@@ -13,7 +13,7 @@ from data import get_crypto_bars
 from utils import Actions
 
 
-def plot_trading_chart(bars, actions=None, ret_img=False):
+def plot_trading_chart(bars, actions=None, ret_img=False, save=False, j=0, mode="int"):
     """
     Generate a chart with the close price at each timestamp and mark each buy action
     with a green upward triangle and each sell action with a red downward triangle.
@@ -23,6 +23,8 @@ def plot_trading_chart(bars, actions=None, ret_img=False):
         actions (list): A list of actions ('buy', 'hold', 'sell') based on a trading strategy.
     """
     bars_with_actions = bars.copy()
+
+    act_dict = {'s': Actions.Sell, 'b': Actions.Buy, 'h':Actions.Hold} if mode is not "int" else {'s': 0, 'b': 1, 'h':2}
 
     fig_size = (15,7) if not ret_img else (3,3)
     figure, ax = plt.subplots(figsize=fig_size)
@@ -50,10 +52,14 @@ def plot_trading_chart(bars, actions=None, ret_img=False):
         return img #img.astype(np.float32) / 255.0
 
     if actions is not None:
+        if len(actions) < len(bars):
+            delta = len(bars)-len(actions)
+            for i in range(delta):
+                actions.insert(0, act_dict["h"])
         bars_with_actions['expert_action'] = actions
-        buy_actions = bars_with_actions[bars_with_actions['expert_action'] == Actions.Buy]
+        buy_actions = bars_with_actions[bars_with_actions['expert_action'] == act_dict["b"]]
         sell_actions = bars_with_actions[bars_with_actions['expert_action']
-                                        == Actions.Sell]
+                                        == act_dict["s"]]
         ax.scatter(buy_actions['timestamp'], buy_actions['close'],
                     marker='^', color='g', label='Buy')
         ax.scatter(sell_actions['timestamp'], sell_actions['close'],
@@ -64,10 +70,14 @@ def plot_trading_chart(bars, actions=None, ret_img=False):
     ax.set_title('Trading Chart')
     ax.legend()
     ax.grid()
-    plt.show()
+    if save:
+        plt.savefig(os.path.dirname(__file__)+f"/test_{j}.png")
+        plt.close()
+    else:
+        plt.show()
 
 
-def calculate_profit(bars, actions, base_amount=1):
+def calculate_profit(bars, actions, base_amount=1, mode="int"):
     """
     Calculate the profit based on the historical price data and the given strategy actions,
     always buying a fixed amount and selling all current holdings.
@@ -89,12 +99,14 @@ def calculate_profit(bars, actions, base_amount=1):
     entry_timestamp = None
     executed_trades = []
 
+    act_dict = {'s': Actions.Sell, 'b': Actions.Buy, 'h':Actions.Hold} if mode is not "int" else {'s': 0, 'b': 1, 'h':2}
+
     for i in range(len(actions)):
-        if actions[i] == Actions.Buy and not holding_position:
+        if actions[i] == act_dict["b"] and not holding_position:
             entry_timestamp = bars['timestamp'][i]
             btc_held = base_amount / bars['close'][i]
             holding_position = True
-        elif actions[i] == Actions.Sell and holding_position:
+        elif actions[i] == act_dict["s"] and holding_position:
             # sell everything? A: yes
             # reason behind trade_profit?
             # A: current value - value when purchased
@@ -116,9 +128,9 @@ def print_summary(profit, trades):
     print(f"Profit: {profit}")
     print(f"Number of trades: {len(trades)}")
     avg_holding_duration = sum(
-        [trade['holding_duration'].days for trade in trades]) / len(trades)
+        [trade['holding_duration'].days for trade in trades]) / len(trades) if len(trades) > 0 else np.nan
     print(f"Average holding duration in days: {avg_holding_duration}")
-    avg_profit = sum([trade['profit'] for trade in trades]) / len(trades)
+    avg_profit = sum([trade['profit'] for trade in trades]) / len(trades) if len(trades) > 0 else np.nan
     print(f"Average profit per trade: {avg_profit}")
 
 
@@ -126,9 +138,9 @@ if __name__ == '__main__':
     bars = get_crypto_bars("BTC/USD", datetime(2021, 7, 11),
                            datetime(2022, 7, 1), timeframe=TimeFrame.Day)
 
-    #actions = expert_2(bars)
-    #profit, trades = calculate_profit(bars, actions)
-    #print("Expert 2")
-    #print_summary(profit, trades)
-    #plot_trading_chart(bars, actions, ret_img=False)
-    #plt.show()
+    actions = expert_2(bars)
+    profit, trades = calculate_profit(bars, actions, mode="enum")
+    print("Expert 2")
+    print_summary(profit, trades)
+    plot_trading_chart(bars, actions, ret_img=False, mode="enum")
+    plt.show()

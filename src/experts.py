@@ -10,7 +10,7 @@ from imitation.data import types
 from evaluation import plot_trading_chart
 
 
-def expert_1(bars):
+def expert_1(bars, mode="enum"):
     """
     A simple expert strategy that recommends to buy if the next day's closing price is higher
     than the current day's closing price, and sell otherwise.
@@ -21,10 +21,11 @@ def expert_1(bars):
     Returns:
         np.ndarray: An array of 'buy' and 'sell' actions based on the simple strategy.
     """
-    return np.where(bars['close'].shift(-1) > bars['close'], Actions.Buy, Actions.Sell)
+    act_dict = {'s': Actions.Sell, 'b': Actions.Buy, 'h':Actions.Hold} if mode is not "int" else {'s': 0, 'b': 1, 'h':2}
+    return np.where(bars['close'].shift(-1) > bars['close'], act_dict["b"], act_dict["s"])
 
 
-def expert_2(bars):
+def expert_2(bars, mode="enum"):
     """
     An expert strategy that recommends to buy when the next day's closing price is going up,
     hold while the price continues to go up, sell as soon as the price starts going down,
@@ -38,20 +39,21 @@ def expert_2(bars):
         list: A list of 'buy', 'hold', and 'sell' actions based on the specified strategy.
     """
     n = len(bars)
-    expert_actions = [Actions.Hold] * n
+    act_dict = {'s': Actions.Sell, 'b': Actions.Buy, 'h':Actions.Hold} if mode is not "int" else {'s': 0, 'b': 1, 'h':2}
+    expert_actions = [act_dict["h"]] * n
     holding_position = False
 
     for i in range(n - 1):
         if bars['close'][i + 1] > bars['close'][i] and not holding_position:
-            expert_actions[i] = Actions.Buy
+            expert_actions[i] = act_dict["b"]
             holding_position = True
         elif bars['close'][i + 1] < bars['close'][i] and holding_position:
-            expert_actions[i] = Actions.Sell
+            expert_actions[i] = act_dict["s"]
             holding_position = False
 
     # Sell at the end of the dataframe if still holding a position
     if holding_position:
-        expert_actions[-1] = Actions.Sell
+        expert_actions[-1] = act_dict["s"]
 
     return expert_actions
 
@@ -61,7 +63,7 @@ def action2int(action):
     if action == Actions.Hold: out = 2
     return out
 
-def get_expert_trajectories(num_trajs=1):
+def get_expert_trajectories(ws=50, num_trajs=1, begin_date=datetime(2021, 1, 1), end_date=datetime(2023, 4, 1)):
     """ generate trajectories for IRL algo.
       A trajectory is a TrajectoryWithRew object holding 
       observations: np.array
@@ -73,18 +75,18 @@ def get_expert_trajectories(num_trajs=1):
     symbols = ["BTC/USD", "ETH/USD", "SOL/USD", "ALGO/USD"]
     symbols_dict = {i:symbols[i] for i in range(len(symbols))}
     
-    bars_org = {val: get_crypto_bars(val, datetime(2021, 1, 1),
-                       datetime(2023, 4, 1), timeframe=TimeFrame.Day) for key, val in symbols_dict.items()}
+    bars_org = {val: get_crypto_bars(val, begin_date, end_date,
+                       timeframe=TimeFrame.Day) for key, val in symbols_dict.items()}
     trajectories = []
-    ws = 50 
-    max_steps = 365
+    ws = ws 
+    max_steps = 90
     min_steps = ws + 20
     print("bars_org", bars_org.keys(), len(bars_org["BTC/USD"]))
     for i_traj in range(num_trajs):
         symbol = np.random.choice(np.array(list(range(len(symbols_dict.values())))), size=1)[0]
         symbol = symbols_dict[symbol]
         length = len(bars_org[symbol])
-        print("chose", symbol)
+        print(f"chose {symbol} with length {length}")
         indices = np.random.choice(
             np.array(list(range(length))), size=2, replace=False)
         begin = indices.min()
@@ -94,16 +96,21 @@ def get_expert_trajectories(num_trajs=1):
         end = begin + np.random.choice(np.array(list(range(min_steps, max_steps))), size=1, replace=False)[0]
         print("begin", begin, "end", end)
         if end - begin <= ws: end += ws # if range too small
-        if end > length: end = length
+        if end > length: 
+            delta = end-length
+            end = length
+            if begin - delta > 0: begin = begin - delta
+            else: begin = 0
         bars = bars_org[symbol].copy(deep=True).iloc[begin:end+1].reset_index(drop=True)
         print(bars)
+        print("begin", begin, "end", end)
         env = TradingEnv(bars, ws)
-        print("env created")
+        print("get_expert_trajectories: env created")
         expert = expert_2(bars)
-        print("expert created")
+        print("get_expert_trajectories: expert created")
         expert = expert[ws:] # TODO
         #plot_trading_chart(bars[ws:], actions=expert)
-        print(len(expert))
+        print("get_expert_trajectories: len(expert)",len(expert))
         
         i_observations = []
         i_rewards = np.array([])
